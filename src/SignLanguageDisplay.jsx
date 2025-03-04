@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import dictionary from './isl_dictionary.json'; 
+import dictionary from './isl_dictionary.json'; // Make sure this file exists and is correctly formatted
 
 function SignLanguageDisplay({ text }) {
   const [videoUrls, setVideoUrls] = useState([]);
@@ -7,8 +7,13 @@ function SignLanguageDisplay({ text }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Helper function to get base URL
   const getBaseUrl = () => {
+    // For local development
     return '';
+    
+    // If you deploy to a subfolder, you might need something like:
+    // return '/your-subfolder';
   };
 
   const generateSignLanguage = (text) => {
@@ -23,23 +28,25 @@ function SignLanguageDisplay({ text }) {
       }
 
       console.log('Generating sign language for text:', text);
-      const words = text.trim().split(/\s+/);
+      const words = text.trim().split(/\s+/); // Split by any whitespace
       const urls = [];
 
       console.log(`Found ${words.length} words to translate:`, words);
 
       let i = 0;
       while (i < words.length) {
+        // Check for phrases in the dictionary (up to 4-word phrases)
         let foundPhrase = false;
         for (let j = Math.min(4, words.length - i); j > 0; j--) {
           const phrase = words.slice(i, i + j).join(' ').toLowerCase();
           console.log(`Checking phrase: "${phrase}"`);
           
           if (dictionary[phrase]) {
+            // Use direct path instead of process.env.PUBLIC_URL
             const videoPath = `${getBaseUrl()}/${dictionary[phrase]}`;
             console.log(`Found match for phrase "${phrase}": ${videoPath}`);
             urls.push(videoPath);
-            i += j;
+            i += j; // Move index past the phrase
             foundPhrase = true;
             break;
           }
@@ -50,20 +57,21 @@ function SignLanguageDisplay({ text }) {
           console.log(`Checking single word: "${word}"`);
           
           if (dictionary[word]) {
+            // Use direct path instead of process.env.PUBLIC_URL
             const videoPath = `${getBaseUrl()}/${dictionary[word]}`;
             console.log(`Found match for word "${word}": ${videoPath}`);
             urls.push(videoPath);
           } else {
             console.log(`No video found for word: "${word}"`);
-            urls.push(null);
+            urls.push(null); // No video found for this word
           }
           i++;
         }
       }
 
       console.log(`Generated ${urls.length} video URLs:`, urls);
-      setVideoUrls(urls.filter(url => url !== null));
-      setCurrentVideoIndex(0); 
+      setVideoUrls(urls.filter(url => url !== null)); // Filter out null entries
+      setCurrentVideoIndex(0); // Reset to first video
       setLoading(false);
     } catch (err) {
       console.error('Error generating sign language videos:', err);
