@@ -8,6 +8,9 @@ from collections import Counter
 import re
 import sacrebleu
 from rouge_score import rouge_scorer
+from flask import g
+import time
+from nltk.translate.meteor_score import meteor_score
 
 # Initialize the app
 app = Flask(__name__)
@@ -22,36 +25,104 @@ nltk.download('averaged_perceptron_tagger')
 nlp = spacy.load('en_core_web_sm')
 
 
+def calculate_accuracy(reference_tokens, hypothesis_tokens):
+    """Calculate word-level matching accuracy."""
+    matches = sum(1 for word in hypothesis_tokens if word in reference_tokens)
+    return (matches / len(reference_tokens)) * 100 if reference_tokens else 0
+
+
 @app.route('/evaluate', methods=['POST'])
 def evaluate_translation():
+    start_time = time.time()
     data = request.get_json()
+
+    # Ensure keys exist in request
+    if 'reference' not in data or 'hypothesis' not in data:
+        return jsonify({'error': 'Missing reference or hypothesis in request'}), 400
+
     reference = data['reference']  # Correct human translation
     hypothesis = data['hypothesis']  # Machine-generated translation
 
-    # BLEU Score (1-gram to 4-gram)
+    # Tokenization
+    reference_tokens = word_tokenize(reference)
+    hypothesis_tokens = word_tokenize(hypothesis)
+
+    # BLEU Score
     bleu_score = sacrebleu.corpus_bleu([hypothesis], [[reference]]).score
 
     # METEOR Score
     meteor = meteor_score([reference.split()], hypothesis.split())
 
-    # TER (Translation Edit Rate)
+    # TER Score
     ter_score = sacrebleu.corpus_ter([hypothesis], [[reference]]).score
 
     # ROUGE Scores
     rouge = rouge_scorer.RougeScorer(['rouge-1', 'rouge-2', 'rouge-l'], use_stemmer=True)
     rouge_scores = rouge.score(reference, hypothesis)
-    
-    return jsonify({
-        'message': 'Translation evaluation complete',
-        'BLEU Score': bleu_score,
-        'METEOR Score': meteor,
-        'TER Score': ter_score,
-        'ROUGE Scores': {
-            'ROUGE-1': rouge_scores['rouge-1'].fmeasure,
-            'ROUGE-2': rouge_scores['rouge-2'].fmeasure,
-            'ROUGE-L': rouge_scores['rouge-l'].fmeasure,
-        }
+
+    # POS Tagging Accuracy
+    reference_pos = dict(nltk.pos_tag(reference_tokens))
+    hypothesis_pos = dict(nltk.pos_tag(hypothesis_tokens))
+    pos_matches = sum(1 for word in hypothesis_pos if word in reference_pos and reference_pos[word] == hypothesis_pos[word])
+    pos_accuracy = (pos_matches / len(reference_pos)) * 100 if reference_pos else 0
+
+    # Named Entity Recognition (NER) Accuracy
+    reference_doc = nlp(reference)
+    hypothesis_doc = nlp(hypothesis)
+    reference_entities = {ent.text: ent.label_ for ent in reference_doc.ents}
+    hypothesis_entities = {ent.text: ent.label_ for ent in hypothesis_doc.ents}
+    ner_matches = sum(1 for entity in hypothesis_entities if entity in reference_entities and reference_entities[entity] == hypothesis_entities[entity])
+    ner_accuracy = (ner_matches / len(reference_entities)) * 100 if reference_entities else 0
+
+    # Lemmatization Accuracy
+    reference_lemmas = {token.text: token.lemma_ for token in reference_doc}
+    hypothesis_lemmas = {token.text: token.lemma_ for token in hypothesis_doc}
+    lemma_matches = sum(1 for word in hypothesis_lemmas if word in reference_lemmas and reference_lemmas[word] == hypothesis_lemmas[word])
+    lemma_accuracy = (lemma_matches / len(reference_lemmas)) * 100 if reference_lemmas else 0
+
+    # Phrase Preservation (Checking noun phrases in hypothesis)
+    reference_phrases = set([chunk.text.lower() for chunk in reference_doc.noun_chunks])
+    hypothesis_phrases = set([chunk.text.lower() for chunk in hypothesis_doc.noun_chunks])
+    phrase_matches = len(reference_phrases.intersection(hypothesis_phrases))
+    phrase_preservation = (phrase_matches / len(reference_phrases)) * 100 if reference_phrases else 0
+    execution_time = time.time() - start_time  # Calculate execution time
+
+    reference_entities = set((ent.text, ent.label_) for ent in reference_doc.ents)
+    hypothesis_entities = set((ent.text, ent.label_) for ent in hypothesis_doc.ents)
+    ner_matches = len(reference_entities.intersection(hypothesis_entities))
+    ner_accuracy = (ner_matches / len(reference_entities)) * 100 if reference_entities else 0
+
+    return jsonify ({
+            'message': 'Translation evaluation complete',
+            'BLEU Score': bleu_score,
+            'METEOR Score': meteor,
+            'TER Score': ter_score,
+            'Execution Time (seconds)': execution_time,
+            'ROUGE Scores': {
+                'ROUGE-1': rouge_scores['rouge-1'].fmeasure,
+                'ROUGE-2': rouge_scores['rouge-2'].fmeasure,
+                'ROUGE-L': rouge_scores['rouge-l'].fmeasure,
+            },
+            'Linguistic Accuracy': {
+                'POS Accuracy': pos_accuracy,
+                'NER Accuracy': ner_accuracy,
+                'Lemmatization Accuracy': lemma_accuracy,
+                'Phrase Preservation': phrase_preservation
+            }
     })
+
+
+
+@app.before_request
+def start_timer():
+    g.start_time = time.time()
+
+@app.after_request
+def log_latency(response):
+    if hasattr(g, 'start_time'):
+        latency = time.time() - g.start_time
+        response.headers['X-Response-Time'] = f"{latency:.4f} sec"
+    return response
 
 
 @app.route('/process', methods=['POST'])
