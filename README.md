@@ -1,17 +1,12 @@
-AI tool to convert speech to Indian Sign Language (ISL) to aid hearing impaired learners.
+# React + Vite
 
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-# For Running the Project Locally on your Computer, follow the easy steps :-
-1 => Clone the repository (either by gitbash or simply clicking on  Code button(Green button) and Download Zip and then extract the files.)
+Currently, two official plugins are available:
 
-2 => Open the extracted files in VS Code and open 2 new terminals(for backend and frontend).
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
 
-3 => For Backend, Run command "cd backend" to go to backend directory and run "python app.py" command to start the server.
+## Expanding the ESLint configuration
 
-4 => For Frontend, go to terminal 2 and run "npm install" command and after it successfully completes, run "npm start" command to start the website.
-
-5 => Now, click on start listening and speak (exapmle sentences only - "good morning how are you" and "i am fine put it above" ), and submit to clear the text area for new speech.
-
-
-# Youtube link for Demo :-
-https://youtu.be/Pye_A8mcS3E
+If you are developing a production application, we recommend using TypeScript and enable type-aware lint rules. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
