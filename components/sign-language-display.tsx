@@ -1,13 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import dictionary from "@/lib/isl_dictionary.json"; // Ensure TypeScript knows the type of this JSON
+import dictionary from "@/lib/isl_dictionary.json";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle, Loader2, RefreshCcw } from "lucide-react";
 
-// Define props interface
 interface SignLanguageDisplayProps {
   text: string;
 }
@@ -19,15 +18,12 @@ export function SignLanguageDisplay({ text }: SignLanguageDisplayProps) {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<number>(0);
 
-  // Helper function to get base URL
   const getBaseUrl = (): string => {
     return "";
   };
 
-  // Type for dictionary
   const dictionaryTyped = dictionary as Record<string, string>;
 
-  // Generate sign language videos
   const generateSignLanguage = useCallback((text: string) => {
     try {
       setLoading(true);
@@ -88,26 +84,22 @@ export function SignLanguageDisplay({ text }: SignLanguageDisplayProps) {
     }
   }, []);
 
-  // Effect to regenerate sign language videos when text changes
   useEffect(() => {
     console.log("SignLanguageDisplay received text:", text);
     generateSignLanguage(text);
   }, [text, generateSignLanguage]);
 
-  // Update progress bar
   useEffect(() => {
     if (videoUrls.length > 0) {
       setProgress((currentVideoIndex / videoUrls.length) * 100);
     }
   }, [currentVideoIndex, videoUrls.length]);
 
-  // Handle video end event
   const handleVideoEnded = () => {
     console.log(`Video ${currentVideoIndex} ended, moving to next`);
     setCurrentVideoIndex((prevIndex) => prevIndex + 1);
   };
 
-  // Handle video error event
   const handleVideoError = () => {
     console.error(`Error loading video at index ${currentVideoIndex}`);
     setError(`Unable to load video file: ${videoUrls[currentVideoIndex]}`);
