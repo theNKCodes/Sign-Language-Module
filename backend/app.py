@@ -11,18 +11,22 @@ from rouge_score import rouge_scorer
 from flask import g
 import time
 from nltk.translate.meteor_score import meteor_score
+from gramformer import Gramformer
+import torch
 
-# Initialize the app
 app = Flask(__name__)
 CORS(app)
 
-# Download necessary NLTK data
+nltk.download('wordnet')
 nltk.download('punkt')
 nltk.download('stopwords')
 nltk.download('averaged_perceptron_tagger')
 
-# Load spaCy model
 nlp = spacy.load('en_core_web_sm')
+
+gf = Gramformer(models=1, use_gpu=torch.cuda.is_available())
+from nltk.corpus import wordnet
+print(wordnet.synsets("example"))
 
 
 def calculate_accuracy(reference_tokens, hypothesis_tokens):
@@ -57,7 +61,7 @@ def evaluate_translation():
     ter_score = sacrebleu.corpus_ter([hypothesis], [[reference]]).score
 
     # ROUGE Scores
-    rouge = rouge_scorer.RougeScorer(['rouge-1', 'rouge-2', 'rouge-l'], use_stemmer=True)
+    rouge = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
     rouge_scores = rouge.score(reference, hypothesis)
 
     # POS Tagging Accuracy
@@ -91,6 +95,7 @@ def evaluate_translation():
     hypothesis_entities = set((ent.text, ent.label_) for ent in hypothesis_doc.ents)
     ner_matches = len(reference_entities.intersection(hypothesis_entities))
     ner_accuracy = (ner_matches / len(reference_entities)) * 100 if reference_entities else 0
+    print(rouge_scorer.RougeScorer.__dict__)
 
     return jsonify ({
             'message': 'Translation evaluation complete',
@@ -99,9 +104,9 @@ def evaluate_translation():
             'TER Score': ter_score,
             'Execution Time (seconds)': execution_time,
             'ROUGE Scores': {
-                'ROUGE-1': rouge_scores['rouge-1'].fmeasure,
-                'ROUGE-2': rouge_scores['rouge-2'].fmeasure,
-                'ROUGE-L': rouge_scores['rouge-l'].fmeasure,
+                'ROUGE-1': rouge_scores['rouge1'].fmeasure,
+                'ROUGE-2': rouge_scores['rouge2'].fmeasure,
+                'ROUGE-L': rouge_scores['rougeL'].fmeasure,
             },
             'Linguistic Accuracy': {
                 'POS Accuracy': pos_accuracy,
@@ -129,44 +134,42 @@ def log_latency(response):
 def process_text():
     data = request.get_json()
     text = data['text']
+    # text = gf.correct(text)
     print(f'Received text for processing: {text}')  # Log the received text
 
-    # Tokenization
-    tokens = word_tokenize(text)
+    # Correct Grammar using Gramformer
+    corrected_text = list(gf.correct(text, max_candidates=1))[0]  # Get the best correction
+    print(f'Corrected text: {corrected_text}')  # Log corrected text
+
+    tokens = word_tokenize(corrected_text)
     num_tokens = len(tokens)
 
-    # Normalization: Remove special characters and convert to lowercase
     tokens = [re.sub(r'[^a-zA-Z]', '', word).lower() for word in tokens if re.sub(r'[^a-zA-Z]', '', word)]
     avg_token_length = sum(len(word) for word in tokens) / len(tokens) if tokens else 0
 
-    # Stop words removal
     stop_words = set(stopwords.words('english'))
     filtered_tokens = [word for word in tokens if word not in stop_words]
     num_stopwords_removed = num_tokens - len(filtered_tokens)
     stopwords_removal_percentage = (num_stopwords_removed / num_tokens) * 100 if num_tokens > 0 else 0
 
-    # POS Tagging
     pos_tags = nltk.pos_tag(filtered_tokens)
     pos_counts = Counter(tag for _, tag in pos_tags)
 
-    # Process text with spaCy
-    doc = nlp(text)
+    doc = nlp(corrected_text)
 
-    # Named Entity Recognition (NER)
     entities = [(entity.text, entity.label_) for entity in doc.ents]
     num_entities = len(entities)
     entity_counts = Counter(entity[1] for entity in entities)
 
-    # Lemmatization
     lemmas = [token.lemma_ for token in doc]
     unique_lemmas = set(lemmas)
     num_lemmas = len(unique_lemmas)
     lemmatization_reduction = ((num_tokens - num_lemmas) / num_tokens) * 100 if num_tokens > 0 else 0
 
-    # Return metrics
     return jsonify({
         'message': 'Text successfully processed',
         'input_text': text,
+        'corrected_text': corrected_text,
         'tokens': tokens,
         'filtered_tokens': filtered_tokens,
         'pos_tags': pos_tags,
@@ -178,10 +181,6 @@ def process_text():
             'num_stopwords_removed': num_stopwords_removed,
             'stopwords_removal_percentage': stopwords_removal_percentage,
             'pos_distribution': dict(pos_counts),
-            'num_entities': num_entities,
-            'entity_distribution': dict(entity_counts),
-            'num_lemmas': num_lemmas,
-            'lemmatization_reduction': lemmatization_reduction
         }
     })
 
