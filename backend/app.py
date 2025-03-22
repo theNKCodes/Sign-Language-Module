@@ -21,6 +21,9 @@ nltk.download('wordnet')
 nltk.download('punkt')
 nltk.download('stopwords')
 nltk.download('averaged_perceptron_tagger')
+# nltk.download('omw-1.4')
+# nltk.download('punkt_tab')
+# nltk.download('averaged_perceptron_tagger_eng')
 
 nlp = spacy.load('en_core_web_sm')
 
@@ -129,25 +132,6 @@ def log_latency(response):
         response.headers['X-Response-Time'] = f"{latency:.4f} sec"
     return response
 
-def convert_slang_nltk(text):
-    slang_dict = {
-        "gotcha": "got you",
-        "asap": "as soon as possible",
-        "fyi": "for your information",
-        "aka": "also known as",
-        "faq": "frequently asked questions",
-        "diy": "do it yourself",
-        "wyd": "what are you doing",
-        "idk": "I don't know",
-        "tbh": "to be honest",
-        "tbf": "to be fair",
-        "smth": "something",
-        "drip": "fashionable outfit",
-    }
-    
-    tokens = word_tokenize(text.lower())
-    converted_tokens = [slang_dict.get(word, word) for word in tokens] 
-    return ' '.join(converted_tokens)
 
 @app.route('/process', methods=['POST'])
 def process_text():
@@ -156,11 +140,9 @@ def process_text():
     # text = gf.correct(text)
     print(f'Received text for processing: {text}')  # Log the received text
 
-    text = convert_slang_nltk(text)
-    print(f'Slang Corrected: {text}')
-
-    corrected_text = list(gf.correct(text, max_candidates=1))[0] 
-    print(f'Corrected text: {corrected_text}')
+    # Correct Grammar using Gramformer
+    corrected_text = list(gf.correct(text, max_candidates=1))[0]  # Get the best correction
+    print(f'Corrected text: {corrected_text}')  # Log corrected text
 
     tokens = word_tokenize(corrected_text)
     num_tokens = len(tokens)
