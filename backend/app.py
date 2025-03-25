@@ -8,141 +8,185 @@ from collections import Counter
 import re
 import sacrebleu
 from rouge_score import rouge_scorer
-from flask import g
 import time
 from nltk.translate.meteor_score import meteor_score
 from gramformer import Gramformer
 import torch
+import os
+import logging
+from dotenv import load_dotenv
+import mysql.connector
+from mysql.connector import Error
+
+
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
-nltk.download('wordnet')
-nltk.download('punkt')
-nltk.download('stopwords')
-nltk.download('averaged_perceptron_tagger')
-# nltk.download('omw-1.4')
-# nltk.download('punkt_tab')
-# nltk.download('averaged_perceptron_tagger_eng')
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-nlp = spacy.load('en_core_web_sm')
-
-gf = Gramformer(models=1, use_gpu=torch.cuda.is_available())
-from nltk.corpus import wordnet
-print(wordnet.synsets("example"))
-
-
-def calculate_accuracy(reference_tokens, hypothesis_tokens):
-    """Calculate word-level matching accuracy."""
-    matches = sum(1 for word in hypothesis_tokens if word in reference_tokens)
-    return (matches / len(reference_tokens)) * 100 if reference_tokens else 0
+# Database configuration
+DB_CONFIG = {
+    'host': os.getenv("DB_HOST"),
+    'user': os.getenv("DB_USER"),
+    'password': os.getenv("DB_PASS"),
+    'database': os.getenv("DB_NAME"),
+    'auth_plugin': 'mysql_native_password'
+}
 
 
+nltk.download('wordnet', quiet=True)
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
+nltk.download('averaged_perceptron_tagger', quiet=True)
+nltk.download('omw-1.4', quiet=True)
+
+try:
+    nlp = spacy.load('en_core_web_sm')
+except OSError:
+    spacy.cli.download("en_core_web_sm")
+    nlp = spacy.load('en_core_web_sm')
+
+try:
+    gf = Gramformer(models=1, use_gpu=torch.cuda.is_available())
+except Exception as e:
+    print(f"Gramformer initialization failed: {str(e)}")
+    raise
+
+
+
+def get_db_connection():
+    """Create and return a database connection with error handling"""
+    try:
+        return mysql.connector.connect(**DB_CONFIG)
+    except Error as e:
+        logger.error(f"Database connection failed: {str(e)}")
+        raise
+ 
+ 
 @app.route('/evaluate', methods=['POST'])
 def evaluate_translation():
-    start_time = time.time()
-    data = request.get_json()
+     start_time = time.time()
+     data = request.get_json()
+     if not data or 'reference' not in data or 'hypothesis' not in data:
+         return jsonify({'error': 'Missing reference or hypothesis in request'}), 400
+     try:
+        reference = data['reference']
+        hypothesis = data['hypothesis']
 
-    # Ensure keys exist in request
-    if 'reference' not in data or 'hypothesis' not in data:
-        return jsonify({'error': 'Missing reference or hypothesis in request'}), 400
+        original_hyp = hypothesis
+        if gf:
+            try:
+                corrections = gf.correct(hypothesis, max_candidates=1)
+                hypothesis = list(corrections)[0] if corrections else hypothesis
+            except Exception as e:
+                logger.warning(f"Grammar correction failed: {str(e)}")
+    
+        reference_tokens = word_tokenize(reference)
+        hypothesis_tokens = word_tokenize(hypothesis)
 
-    reference = data['reference']  # Correct human translation
-    hypothesis = data['hypothesis']  # Machine-generated translation
+        bleu_score = sacrebleu.corpus_bleu([hypothesis], [[reference]]).score
+        meteor = meteor_score([reference.split()], hypothesis.split())
+        ter_score = sacrebleu.corpus_ter([hypothesis], [[reference]]).score
+    
+        rouge = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+        rouge_scores = rouge.score(reference, hypothesis)
+    
+        # POS Tagging Accuracy
+        reference_pos = dict(nltk.pos_tag(reference_tokens))
+        hypothesis_pos = dict(nltk.pos_tag(hypothesis_tokens))
+        pos_matches = sum(1 for word in hypothesis_pos if word in reference_pos and reference_pos[word] == hypothesis_pos[word])
+        pos_accuracy = (pos_matches / len(reference_pos)) * 100 if reference_pos else 0
+    
+        # Named Entity Recognition (NER) Accuracy
+        reference_doc = nlp(reference)
+        hypothesis_doc = nlp(hypothesis)
+        reference_entities = {ent.text: ent.label_ for ent in reference_doc.ents}
+        hypothesis_entities = {ent.text: ent.label_ for ent in hypothesis_doc.ents}
+        ner_matches = sum(1 for entity in hypothesis_entities if entity in reference_entities and reference_entities[entity] == hypothesis_entities[entity])
+        ner_accuracy = (ner_matches / len(reference_entities)) * 100 if reference_entities else 0
+    
+        # Lemmatization Accuracy
+        reference_lemmas = {token.text: token.lemma_ for token in reference_doc}
+        hypothesis_lemmas = {token.text: token.lemma_ for token in hypothesis_doc}
+        lemma_matches = sum(1 for word in hypothesis_lemmas if word in reference_lemmas and reference_lemmas[word] == hypothesis_lemmas[word])
+        lemma_accuracy = (lemma_matches / len(reference_lemmas)) * 100 if reference_lemmas else 0
+    
+        # Phrase Preservation (Checking noun phrases in hypothesis)
+        reference_phrases = set([chunk.text.lower() for chunk in reference_doc.noun_chunks])
+        hypothesis_phrases = set([chunk.text.lower() for chunk in hypothesis_doc.noun_chunks])
+        phrase_matches = len(reference_phrases.intersection(hypothesis_phrases))
+        phrase_preservation = (phrase_matches / len(reference_phrases)) * 100 if reference_phrases else 0
+    
+        reference_entities = set((ent.text, ent.label_) for ent in reference_doc.ents)
+        hypothesis_entities = set((ent.text, ent.label_) for ent in hypothesis_doc.ents)
+        ner_matches = len(reference_entities.intersection(hypothesis_entities))
+        ner_accuracy = (ner_matches / len(reference_entities)) * 100 if reference_entities else 0
+        print(rouge_scorer.RougeScorer.__dict__)
 
-    # Tokenization
-    reference_tokens = word_tokenize(reference)
-    hypothesis_tokens = word_tokenize(hypothesis)
+        execution_time = time.time() - start_time  
 
-    # BLEU Score
-    bleu_score = sacrebleu.corpus_bleu([hypothesis], [[reference]]).score
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-    # METEOR Score
-    meteor = meteor_score([reference.split()], hypothesis.split())
+            sql = """INSERT INTO evaluations (input, reference,  hypothesis, bleu_score, meteor_score,ter_score, 
+                                            rouge1, rouge2, rougeL, pos_accuracy, ner_accuracy, 
+                                            lemmatization_accuracy, phrase_preservation, execution_time)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+            
+            values = (original_hyp ,reference,  hypothesis, bleu_score, meteor, ter_score, 
+                    rouge_scores['rouge1'].fmeasure, rouge_scores['rouge2'].fmeasure, rouge_scores['rougeL'].fmeasure, 
+                    pos_accuracy, ner_accuracy, lemma_accuracy, phrase_preservation, execution_time)
 
-    # TER Score
-    ter_score = sacrebleu.corpus_ter([hypothesis], [[reference]]).score
+            cursor.execute(sql, values)
+            conn.commit()
+        except Error as e:
+            logger.error(f"Database error: {str(e)}")
+            return jsonify({'error': 'Failed to save evaluation'}), 500
+        finally:
+            if conn.is_connected():
+                cursor.close()
+                conn.close()
 
-    # ROUGE Scores
-    rouge = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
-    rouge_scores = rouge.score(reference, hypothesis)
-
-    # POS Tagging Accuracy
-    reference_pos = dict(nltk.pos_tag(reference_tokens))
-    hypothesis_pos = dict(nltk.pos_tag(hypothesis_tokens))
-    pos_matches = sum(1 for word in hypothesis_pos if word in reference_pos and reference_pos[word] == hypothesis_pos[word])
-    pos_accuracy = (pos_matches / len(reference_pos)) * 100 if reference_pos else 0
-
-    # Named Entity Recognition (NER) Accuracy
-    reference_doc = nlp(reference)
-    hypothesis_doc = nlp(hypothesis)
-    reference_entities = {ent.text: ent.label_ for ent in reference_doc.ents}
-    hypothesis_entities = {ent.text: ent.label_ for ent in hypothesis_doc.ents}
-    ner_matches = sum(1 for entity in hypothesis_entities if entity in reference_entities and reference_entities[entity] == hypothesis_entities[entity])
-    ner_accuracy = (ner_matches / len(reference_entities)) * 100 if reference_entities else 0
-
-    # Lemmatization Accuracy
-    reference_lemmas = {token.text: token.lemma_ for token in reference_doc}
-    hypothesis_lemmas = {token.text: token.lemma_ for token in hypothesis_doc}
-    lemma_matches = sum(1 for word in hypothesis_lemmas if word in reference_lemmas and reference_lemmas[word] == hypothesis_lemmas[word])
-    lemma_accuracy = (lemma_matches / len(reference_lemmas)) * 100 if reference_lemmas else 0
-
-    # Phrase Preservation (Checking noun phrases in hypothesis)
-    reference_phrases = set([chunk.text.lower() for chunk in reference_doc.noun_chunks])
-    hypothesis_phrases = set([chunk.text.lower() for chunk in hypothesis_doc.noun_chunks])
-    phrase_matches = len(reference_phrases.intersection(hypothesis_phrases))
-    phrase_preservation = (phrase_matches / len(reference_phrases)) * 100 if reference_phrases else 0
-    execution_time = time.time() - start_time  # Calculate execution time
-
-    reference_entities = set((ent.text, ent.label_) for ent in reference_doc.ents)
-    hypothesis_entities = set((ent.text, ent.label_) for ent in hypothesis_doc.ents)
-    ner_matches = len(reference_entities.intersection(hypothesis_entities))
-    ner_accuracy = (ner_matches / len(reference_entities)) * 100 if reference_entities else 0
-    print(rouge_scorer.RougeScorer.__dict__)
-
-    return jsonify ({
-            'message': 'Translation evaluation complete',
-            'BLEU Score': bleu_score,
-            'METEOR Score': meteor,
-            'TER Score': ter_score,
-            'Execution Time (seconds)': execution_time,
-            'ROUGE Scores': {
-                'ROUGE-1': rouge_scores['rouge1'].fmeasure,
-                'ROUGE-2': rouge_scores['rouge2'].fmeasure,
-                'ROUGE-L': rouge_scores['rougeL'].fmeasure,
-            },
-            'Linguistic Accuracy': {
-                'POS Accuracy': pos_accuracy,
-                'NER Accuracy': ner_accuracy,
-                'Lemmatization Accuracy': lemma_accuracy,
-                'Phrase Preservation': phrase_preservation
-            }
-    })
-
-
-
-@app.before_request
-def start_timer():
-    g.start_time = time.time()
-
-@app.after_request
-def log_latency(response):
-    if hasattr(g, 'start_time'):
-        latency = time.time() - g.start_time
-        response.headers['X-Response-Time'] = f"{latency:.4f} sec"
-    return response
-
+    
+        return jsonify ({
+                'message': 'Translation evaluation complete',
+                'Execution Time (seconds)': execution_time,
+                'BLEU Score': bleu_score,
+                'METEOR Score': meteor,
+                'TER Score': ter_score,
+                'ROUGE Scores': {
+                    'ROUGE-1': rouge_scores['rouge1'].fmeasure,
+                    'ROUGE-2': rouge_scores['rouge2'].fmeasure,
+                    'ROUGE-L': rouge_scores['rougeL'].fmeasure,
+                },
+                'Linguistic Accuracy': {
+                    'POS Accuracy': pos_accuracy,
+                    'NER Accuracy': ner_accuracy,
+                    'Lemmatization Accuracy': lemma_accuracy,
+                    'Phrase Preservation': phrase_preservation
+                }
+        })
+     except Exception as e:
+        logger.error(f"Evaluation error: {str(e)}")
+        return jsonify({'error': 'Evaluation failed', 'details': str(e)}), 500
 
 @app.route('/process', methods=['POST'])
 def process_text():
     data = request.get_json()
     text = data['text']
-    # text = gf.correct(text)
-    print(f'Received text for processing: {text}')  # Log the received text
+    print(f'Received text for processing: {text}')
 
-    # Correct Grammar using Gramformer
-    corrected_text = list(gf.correct(text, max_candidates=1))[0]  # Get the best correction
-    print(f'Corrected text: {corrected_text}')  # Log corrected text
+    corrected = list(gf.correct(text, max_candidates=1))
+    corrected_text = corrected[0] if corrected else text
+    print(f'Corrected text: {corrected_text}')
 
     tokens = word_tokenize(corrected_text)
     num_tokens = len(tokens)
@@ -153,7 +197,7 @@ def process_text():
     stop_words = set(stopwords.words('english'))
     filtered_tokens = [word for word in tokens if word not in stop_words]
     num_stopwords_removed = num_tokens - len(filtered_tokens)
-    stopwords_removal_percentage = (num_stopwords_removed / num_tokens) * 100 if num_tokens > 0 else 0
+    stopwords_removal_percentage = (num_stopwords_removed / num_tokens * 100) if num_tokens else 0
 
     pos_tags = nltk.pos_tag(filtered_tokens)
     pos_counts = Counter(tag for _, tag in pos_tags)
@@ -188,4 +232,4 @@ def process_text():
     })
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(port=5001,debug=False)
