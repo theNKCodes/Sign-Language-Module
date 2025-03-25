@@ -17,6 +17,7 @@ import logging
 from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import Error
+import json
 
 
 load_dotenv()
@@ -130,6 +131,34 @@ def evaluate_translation():
         ner_accuracy = (ner_matches / len(reference_entities)) * 100 if reference_entities else 0
         print(rouge_scorer.RougeScorer.__dict__)
 
+##
+
+        print(f'Corrected text: {hypothesis}')
+        num_tokens = len(hypothesis_tokens)
+
+        hypothesis_tokens = [re.sub(r'[^a-zA-Z]', '', word).lower() for word in hypothesis_tokens if re.sub(r'[^a-zA-Z]', '', word)]
+        avg_token_length = sum(len(word) for word in hypothesis_tokens) / len(hypothesis_tokens) if hypothesis_tokens else 0
+
+        stop_words = set(stopwords.words('english'))
+        filtered_tokens = [word for word in hypothesis_tokens if word not in stop_words]
+        num_stopwords_removed = num_tokens - len(filtered_tokens)
+        stopwords_removal_percentage = (num_stopwords_removed / num_tokens * 100) if num_tokens else 0
+
+        pos_tags = nltk.pos_tag(filtered_tokens)
+        pos_distribution = dict(Counter(tag for _, tag in pos_tags))
+        pos_counts = json.dumps(pos_distribution)  # For database storage
+
+        doc = nlp(hypothesis)
+
+        entities = [(entity.text, entity.label_) for entity in doc.ents]
+        num_entities = len(entities)
+        entity_counts = Counter(entity[1] for entity in entities)
+
+        lemmas = [token.lemma_ for token in doc]
+        unique_lemmas = set(lemmas)
+        num_lemmas = len(unique_lemmas)
+        lemmatization_reduction = ((num_tokens - num_lemmas) / num_tokens) * 100 if num_tokens > 0 else 0
+##
         execution_time = time.time() - start_time  
 
         try:
@@ -137,13 +166,12 @@ def evaluate_translation():
             cursor = conn.cursor()
 
             sql = """INSERT INTO evaluations (input, reference,  hypothesis, bleu_score, meteor_score,ter_score, 
-                                            rouge1, rouge2, rougeL, pos_accuracy, ner_accuracy, 
-                                            lemmatization_accuracy, phrase_preservation, execution_time)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+                                            rouge1, rouge2, rougeL, pos_accuracy, ner_accuracy,                                      lemmatization_accuracy, phrase_preservation, num_tokens, avg_token_length, num_stopwords_removed, stopwords_removal_percentage, pos_distribution, execution_time)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
             
             values = (original_hyp ,reference,  hypothesis, bleu_score, meteor, ter_score, 
                     rouge_scores['rouge1'].fmeasure, rouge_scores['rouge2'].fmeasure, rouge_scores['rougeL'].fmeasure, 
-                    pos_accuracy, ner_accuracy, lemma_accuracy, phrase_preservation, execution_time)
+                    pos_accuracy, ner_accuracy, lemma_accuracy, phrase_preservation, num_tokens, avg_token_length, num_stopwords_removed, stopwords_removal_percentage, pos_counts, execution_time)
 
             cursor.execute(sql, values)
             conn.commit()
@@ -172,7 +200,14 @@ def evaluate_translation():
                     'NER Accuracy': ner_accuracy,
                     'Lemmatization Accuracy': lemma_accuracy,
                     'Phrase Preservation': phrase_preservation
-                }
+                },
+                'metrics': {
+                    'num_tokens': num_tokens,
+                    'avg_token_length': avg_token_length,
+                    'num_stopwords_removed': num_stopwords_removed,
+                    'stopwords_removal_percentage': stopwords_removal_percentage,
+                    'pos_distribution': pos_distribution,
+            }
         })
      except Exception as e:
         logger.error(f"Evaluation error: {str(e)}")
