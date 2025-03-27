@@ -7,3 +7,6 @@ rouge_score
 torch
 mysql-connector-python
 python-dotenv
+pandas
+matplotlib
+seaborn
