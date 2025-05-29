@@ -33,9 +33,35 @@ This project provides a **Flask-based backend API** that evaluates sign language
 ## 📂 Project Structure
 
 ```
-backend/
-├── app.py               # Main Flask app
-├── .env                 # Environment variables (DB credentials)
+SIGN-LANGUAGE-MODULE/
+├── app/
+│   └── backend/
+│       ├── new/
+│       └── old/
+│       ├── app.py
+│       ├── eva_with_headers.csv
+│       ├── evaluation_data.csv
+│       ├── graphs.ipynb
+│       ├── new.py
+│       └── nlp.ipynb
+│       └── requirements.txt
+├── components/
+├── hooks/
+├── lib/
+├── node_modules/
+├── public/
+├── styles/
+├── .gitignore
+├── bun.lockb
+├── components.json
+├── gram.ipynb
+├── next-env.d.ts
+├── next.config.mjs
+├── package.json
+├── postcss.config.mjs
+├── README.md
+├── tailwind.config.js
+
 ```
 
 ---
